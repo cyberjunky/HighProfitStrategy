@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+import traceback
 from datetime import datetime
 from datetime import timedelta, timezone
 from functools import reduce
@@ -105,7 +106,8 @@ class HPStrategy(IStrategy):
     base_nb_candles_buy = IntParameter(8, 20, default=buy_params['base_nb_candles_buy'], space='buy', optimize=False)
     low_offset = DecimalParameter(0.975, 0.995, default=buy_params['low_offset'], space='buy', optimize=True)
     rsi_buy = IntParameter(30, 70, default=buy_params['rsi_buy'], space='buy', optimize=False)
-    lambo2_ema_14_factor = DecimalParameter(0.8, 1.2, decimals=3, default=buy_params['lambo2_ema_14_factor'], space='buy', optimize=True)
+    lambo2_ema_14_factor = DecimalParameter(0.8, 1.2, decimals=3, default=buy_params['lambo2_ema_14_factor'],
+                                            space='buy', optimize=True)
     lambo2_rsi_4_limit = IntParameter(10, 60, default=buy_params['lambo2_rsi_4_limit'], space='buy', optimize=True)
     lambo2_rsi_14_limit = IntParameter(10, 60, default=buy_params['lambo2_rsi_14_limit'], space='buy', optimize=True)
 
@@ -141,7 +143,8 @@ class HPStrategy(IStrategy):
         "high_offset_2": 1.01
     }
 
-    base_nb_candles_sell = IntParameter(8, 20, default=sell_params['base_nb_candles_sell'], space='sell', optimize=False)
+    base_nb_candles_sell = IntParameter(8, 20, default=sell_params['base_nb_candles_sell'], space='sell',
+                                        optimize=False)
     high_offset = DecimalParameter(1.000, 1.010, default=sell_params['high_offset'], space='sell', optimize=True)
     high_offset_2 = DecimalParameter(1.000, 1.010, default=sell_params['high_offset_2'], space='sell', optimize=True)
 
@@ -290,18 +293,6 @@ class HPStrategy(IStrategy):
         high_max = dataframe['high'].rolling(window=14).max()
         dataframe['stoch_k'] = 100 * (dataframe['close'] - low_min) / (high_max - low_min)
         dataframe['stoch_d'] = dataframe['stoch_k'].rolling(window=3).mean()
-        cnum = 64
-        price_range = np.linspace(data_last_bbars['low'].min(), data_last_bbars['high'].max(), num=cnum)
-        vol_profile = pd.cut(data_last_bbars['close'], bins=price_range, include_lowest=True, labels=range(cnum - 1))
-        vol_by_price = data_last_bbars.groupby(vol_profile)['volume'].sum()
-        poc_index = vol_by_price.idxmax()
-        dataframe['poc'] = price_range[poc_index] if poc_index >= 0 else np.nan
-        percent = 70
-        va_threshold = vol_by_price.sum() * (percent / 100)
-        cum_vol = vol_by_price.sort_values(ascending=False).cumsum()
-        value_area = cum_vol[cum_vol <= va_threshold].index
-        dataframe['va_high'] = np.nan if value_area.empty else price_range[value_area.max()]
-        dataframe['va_low'] = np.nan if value_area.empty else price_range[value_area.min()]
 
         pair = metadata['pair']
         if self.config['stake_currency'] in ['USDT', 'BUSD']:
@@ -460,14 +451,8 @@ class HPStrategy(IStrategy):
             dataframe['btc_rsi_8_1h'] < 35.0,
         ]
 
-        poc_condition = (
-                (dataframe['close'] < dataframe['poc']) &
-                (dataframe['close'] < dataframe['va_low'])
-        )
         if conditions:
-            combined_conditions = [poc_condition & condition for condition in conditions]
-            # combined_conditions = [condition for condition in conditions]
-            final_condition = reduce(lambda x, y: x | y, combined_conditions)
+            final_condition = reduce(lambda x, y: x | y, conditions)
             dataframe.loc[final_condition, 'buy'] = 1
         if dont_buy_conditions:
             for condition in dont_buy_conditions:
@@ -764,3 +749,180 @@ class HPStrategyFLRSI(HPStrategyTF):
         dataframe.loc[dataframe['atr'] > 0.002727272727272727, 'buy'] = 0
 
         return dataframe
+
+
+class HPStrategyBD(HPStrategyDCA):
+
+    def version(self) -> str:
+        return f"{super().version()} BD "
+
+    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        logging.info("Populating indicators")
+        dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
+        dataframe['rsi_fast'] = ta.RSI(dataframe, timeperiod=4)
+        dataframe['rsi_slow'] = ta.RSI(dataframe, timeperiod=20)
+        dataframe['adx'] = ta.ADX(dataframe)
+        dataframe['ema_8'] = ta.EMA(dataframe, timeperiod=8)
+        dataframe['ema_14'] = ta.EMA(dataframe, timeperiod=14)
+        dataframe['rsi_4'] = ta.RSI(dataframe, timeperiod=4)
+        dataframe['rsi_14'] = ta.RSI(dataframe, timeperiod=14)
+        stoch_fast = ta.STOCHF(dataframe, 5, 3, 0, 3, 0)
+        dataframe['fastd'] = stoch_fast['fastd']
+        dataframe['fastk'] = stoch_fast['fastk']
+
+        dataframe['EWO'] = EWO(dataframe, self.fast_ewo, self.slow_ewo)
+        low_min = dataframe['low'].rolling(window=14, center=True).apply(lambda x: np.argmin(x) == 7, raw=True)
+        rsi_min = dataframe['rsi'].rolling(window=14, center=True).apply(lambda x: np.argmin(x) == 7, raw=True)
+        bullish_div = (low_min.notna()) & (rsi_min.shift() > rsi_min)
+        dataframe['bullish_divergence'] = bullish_div.astype(int)
+        if self.config['stake_currency'] in ['USDT', 'BUSD']:
+            btc_info_pair = f"BTC/{self.config['stake_currency']}"
+        else:
+            btc_info_pair = "BTC/USDT"
+        btc_info_tf = self.dp.get_pair_dataframe(btc_info_pair, self.inf_1h)
+        btc_info_tf = self.info_tf_btc_indicators(btc_info_tf, metadata)
+        dataframe = merge_informative_pair(dataframe, btc_info_tf, self.timeframe, self.inf_1h, ffill=True)
+        drop_columns = [f"{s}_{self.inf_1h}" for s in ['date', 'open', 'high', 'low', 'close', 'volume']]
+        dataframe.drop(columns=dataframe.columns.intersection(drop_columns), inplace=True)
+        btc_base_tf = self.dp.get_pair_dataframe(btc_info_pair, self.timeframe)
+        btc_base_tf = self.base_tf_btc_indicators(btc_base_tf, metadata)
+        dataframe = merge_informative_pair(dataframe, btc_base_tf, self.timeframe, self.timeframe, ffill=True)
+        drop_columns = [f"{s}_{self.timeframe}" for s in ['date', 'open', 'high', 'low', 'close', 'volume']]
+        dataframe.drop(columns=dataframe.columns.intersection(drop_columns), inplace=True)
+
+        for val in self.base_nb_candles_buy.range:
+            dataframe[f'ma_buy_{val}'] = ta.EMA(dataframe, timeperiod=val)
+        for val in self.base_nb_candles_sell.range:
+            dataframe[f'ma_sell_{val}'] = ta.EMA(dataframe, timeperiod=val)
+
+        dataframe['hma_50'] = qtpylib.hull_moving_average(dataframe['close'], window=50)
+        dataframe['sma_9'] = ta.SMA(dataframe, timeperiod=9)
+        dataframe = self.pump_dump_protection(dataframe, metadata)
+        return dataframe
+
+    def populate_buy_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        dataframe = super().populate_buy_trend(dataframe, metadata)
+        dataframe.loc[:, 'buy'] = 0
+        bd = (
+            (dataframe['bullish_divergence'] > 0)
+        )
+        dataframe.loc[bd, 'buy_tag'] += 'bullish_divergence_'
+        dataframe.loc[bd, 'buy'] = 1
+        return dataframe
+
+    def populate_sell_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        if conditions := [
+            (dataframe['close'] > dataframe['hma_50'])
+            & (
+                    dataframe['close']
+                    > (
+                            dataframe[f'ma_sell_{self.base_nb_candles_sell.value}']
+                            * self.high_offset_2.value
+                    )
+            )
+            & (dataframe['rsi'] > 50)
+            & (dataframe['volume'] > 0)
+            & (dataframe['rsi_fast'] > dataframe['rsi_slow'])
+            | (dataframe['close'] < dataframe['hma_50'])
+            & (
+                    dataframe['close']
+                    > (
+                            dataframe[f'ma_sell_{self.base_nb_candles_sell.value}']
+                            * self.high_offset.value
+                    )
+            )
+            & (dataframe['volume'] > 0)
+            & (dataframe['rsi_fast'] > dataframe['rsi_slow'])
+        ]:
+            dataframe.loc[
+                reduce(lambda x, y: x | y, conditions),
+                'sell'
+            ] = 1
+        return dataframe
+
+    def adjust_trade_position(self, trade: Trade, current_time: datetime,
+                              current_rate: float, current_profit: float, min_stake: float,
+                              max_stake: float, **kwargs):
+        logging.info("Adjusting trade position")
+
+        try:
+            dataframe, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
+            df = dataframe.copy()
+        except Exception as e:
+            logging.error(f"Error getting analyzed dataframe: {e}")
+            return None
+
+        volatility = self.calculate_volatility(df, trade.pair, self.timeframe)
+        adjusted_min_stake = self.dynamic_stake_adjustment(min_stake, volatility)
+        adjusted_max_stake = self.dynamic_stake_adjustment(max_stake, volatility)
+
+        last_candle = df.iloc[-1].squeeze()
+        previous_candle = df.iloc[-2].squeeze()
+        if last_candle['close'] < previous_candle['close']:
+            return None
+
+        current_candle_index = df.index[-1]
+
+        if last_buy_order := next(
+                (
+                        order
+                        for order in sorted(
+                    trade.orders, key=lambda x: x.order_date, reverse=True
+                )
+                        if order.ft_order_side == 'buy' and order.status == 'closed'
+                ),
+                None,
+        ):
+            last_buy_candle = dataframe.loc[dataframe['date'] == last_buy_order.order_date]
+            if not last_buy_candle.empty:
+                last_buy_candle_index = last_buy_candle.index[0]
+                if current_candle_index == last_buy_candle_index:
+                    return None
+
+        if (last_candle['bullish_divergence'] == 0 and previous_candle['bullish_divergence'] == 0):
+            return None
+
+        count_of_buys = sum(order.ft_order_side == 'buy' and order.status == 'closed' for order in trade.orders)
+
+        if self.max_safety_orders >= count_of_buys >= 1:
+            last_order_price = trade.open_rate
+            if last_buy_order := next(
+                    (
+                            order
+                            for order in sorted(
+                        trade.orders, key=lambda x: x.order_date, reverse=True
+                    )
+                            if order.ft_order_side == 'buy'
+                    ),
+                    None,
+            ):
+                last_order_price = last_buy_order.price or last_buy_order.average
+
+            drawdown = self.calculate_drawdown(current_rate, last_order_price) if last_order_price else 0
+
+            if drawdown <= self.drawdown_limit:
+                try:
+                    stake_amount = self.wallets.get_trade_stake_amount(trade.pair, None)
+                    stake_amount = min(stake_amount * math.pow(self.safety_order_volume_scale, (count_of_buys - 1)),
+                                       adjusted_max_stake)
+                    if stake_amount < adjusted_min_stake:
+                        return None
+
+                    try:
+                        price_change_rate = (last_candle['close'] - previous_candle['close']) / previous_candle['close']
+                        if price_change_rate < -0.02:
+                            adjusted_stake = stake_amount * 1.5
+                        elif price_change_rate > 0.02:
+                            adjusted_stake = stake_amount * 0.75
+                        else:
+                            adjusted_stake = stake_amount
+                    except:
+                        adjusted_stake = stake_amount
+
+                    return adjusted_stake
+
+                except Exception as exception:
+                    logging.error(f"Error adjusting trade position: {exception}")
+                    return None
+
+        return None
