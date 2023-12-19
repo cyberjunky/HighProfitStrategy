@@ -1,12 +1,12 @@
 {
-    "max_open_trades": 10,
+    "max_open_trades": 5,
     "stake_currency": "USDT",
     "stake_amount": "unlimited",
-    "tradable_balance_ratio": 0.9,
+    "tradable_balance_ratio": 1,
     "fiat_display_currency": "USD",
-    "timeframe": "1m",
+    "timeframe": "5m",
     "dry_run": true,
-    "dry_run_wallet": 200,
+    "dry_run_wallet": 1000,
     "cancel_open_orders_on_exit": false,
     "trading_mode": "spot",
     "margin_mode": "",
@@ -39,10 +39,10 @@
         "ccxt_config": {
             "enableRateLimit": true,
             "timeout": 60000,
-            "_urls": {
+            "urls": {
                 "api": {
-                    "public": "http://192.168.1.245:8888/kucoin",
-                    "private": "http://192.168.1.245:8888/kucoin"
+                    "public": "http://proxy:8080/kucoin",
+                    "private": "http://proxy:8080/kucoin"
                 }
             }
         },
@@ -56,7 +56,7 @@
     "pairlists": [
         {
             "method": "VolumePairList",
-            "number_assets": 30,
+            "number_assets": 50,
             "sort_key": "quoteVolume",
             "min_value": 500000,
             "refresh_period": 1800,
@@ -64,7 +64,8 @@
           },
           {
             "method": "PriceFilter",
-            "max_price": 10
+            "max_price": 5,
+            "min_price": 0.05
           }
     ],
     "api_server": {
