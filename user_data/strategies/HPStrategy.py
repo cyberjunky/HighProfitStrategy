@@ -62,7 +62,7 @@ class HPStrategy(IStrategy):
     is_optimize_cofi = False
     use_sell_signal = True
     sell_profit_only = True
-    sell_profit_offset = 0.005
+    sell_profit_offset = 0.015
     ignore_roi_if_buy_signal = False
     position_adjustment_enable = True
     order_time_in_force = {
@@ -293,7 +293,7 @@ class HPStrategy(IStrategy):
             logging.error(str(ex))
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        logging.info("Populating indicators")
+        # logging.info("Populating indicators")
         dataframe['price_history'] = dataframe['close'].shift(1)
         data_last_bbars = dataframe[-30:].copy()
         low_min = dataframe['low'].rolling(window=14).min()
@@ -558,7 +558,7 @@ class HPStrategyDCA(HPStrategy):
         return dataframe
 
     def calculate_volatility(self, dataframe: DataFrame, pair: str, timeframe: str) -> float:
-        logging.info("Calculating volatility")
+        # logging.info("Calculating volatility")
         timeframes_in_minutes = {
             '1m': 1,
             '5m': 5,
@@ -632,13 +632,15 @@ class HPStrategyDCA(HPStrategy):
         conditions.append(is_cofi)
         return any(conditions)
 
-    def calculate_median_drop(self, dataframe, num_candles):
+    def calculate_median_drop(self, dataframe, num_candles, pair):
         if len(dataframe) < num_candles:
             return None
         dataframe['max_price'] = dataframe['high'].rolling(window=num_candles).max()
         dataframe['percent_drop'] = (dataframe['max_price'] - dataframe['close']) / dataframe['max_price'] * 100
         median_drop = dataframe['percent_drop'].rolling(window=num_candles).median().iloc[-1]
         x = int(round(median_drop * 0.2))
+
+        logging.info(f"Calculated Median drop for {pair} is {median_drop} %")
         if x <= 0:
             x = 2
         return x
@@ -654,7 +656,7 @@ class HPStrategyDCA(HPStrategy):
             logging.error(f"Error getting analyzed dataframe: {e}")
             return None
 
-        average = self.calculate_median_drop(dataframe=df, num_candles=20)
+        average = self.calculate_median_drop(dataframe=df, num_candles=20, pair=trade.pair)
         volatility = self.calculate_volatility(df, trade.pair, self.timeframe)
         adjusted_min_stake = self.dynamic_stake_adjustment(min_stake, volatility)
         adjusted_max_stake = self.dynamic_stake_adjustment(max_stake, volatility)
