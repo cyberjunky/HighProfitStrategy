@@ -1,10 +1,10 @@
 {
-    "max_open_trades": 5,
+    "max_open_trades": 50,
     "stake_currency": "USDT",
     "stake_amount": "unlimited",
     "tradable_balance_ratio": 1,
     "fiat_display_currency": "USD",
-    "timeframe": "5m",
+    "timeframe": "1m",
     "dry_run": true,
     "dry_run_wallet": 1000,
     "cancel_open_orders_on_exit": false,
