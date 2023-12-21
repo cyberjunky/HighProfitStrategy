@@ -1,5 +1,5 @@
 {
-    "max_open_trades": 50,
+    "max_open_trades": 90,
     "stake_currency": "USDT",
     "stake_amount": "unlimited",
     "tradable_balance_ratio": 1,
@@ -41,8 +41,8 @@
             "timeout": 60000,
             "urls": {
                 "api": {
-                    "public": "http://proxy:8080/kucoin",
-                    "private": "http://proxy:8080/kucoin"
+                    "public": "http://proxy_tst:8080/kucoin",
+                    "private": "http://proxy_tst:8080/kucoin"
                 }
             }
         },
@@ -51,7 +51,7 @@
             "timeout": 60000
         },
         "pair_whitelist": ["BTC/USDT"],
-        "pair_blacklist": []
+        "pair_blacklist": ["USDC/USDT","BIIS/USDT"]
     },
     "pairlists": [
         {
@@ -66,6 +66,10 @@
             "method": "PriceFilter",
             "max_price": 5,
             "min_price": 0.05
+          },
+          {
+            "method": "AgeFilter",
+            "min_days_listed": 10
           }
     ],
     "api_server": {
@@ -74,8 +78,8 @@
         "listen_port": 8080,
         "verbosity": "error",
         "enable_openapi": false,
-        "jwt_secret_key": "ae412db3a7d3c4076e92088109331deaeed58d0840e41aeb04afbc37f66388cb",
-        "ws_token": "P3RWZvSHaCxv39j_bj7WF2OU1BJmzRujIA",
+        "jwt_secret_key": "ae412db3a7d3c4076e92088109331deaeed58d0840e41aeb04afbc37f66388cq",
+        "ws_token": "P3RWZvSHaCxv39j_bj7WF2OU1BJmzRujID",
         "CORS_origins": [],
         "username": "freqtrade",
         "password": "freqtrade"
